@@ -43,14 +43,18 @@
             position: relative; 
             z-index: 2;
             text-align: center;
+            max-width: 95vw; /* Prevent overflow on small screens */
         }
 
         #game-container {
             position: relative;
-            width: 500px;
-            height: 600px;
-            max-width: 90vw; /* Ensure it doesn't get too wide on large screens */
-            max-height: 80vh; /* Ensure it fits vertically */
+            /* FIX: Use aspect-ratio to maintain proportions and prevent stretching */
+            aspect-ratio: 500 / 600;
+            width: 500px; /* Define ideal width */
+            max-width: 90vw; /* Shrink on small viewports */
+            max-height: 75vh; /* Prevent it from being too tall on certain screens */
+            height: auto; /* Height is now determined by width + aspect-ratio */
+            
             background-color: rgba(214, 232, 250, 0.65); /* Semi-transparent */
             backdrop-filter: blur(4px); /* Frosted glass effect */
             border: 5px solid rgba(163, 193, 227, 0.7); /* Semi-transparent border */
@@ -64,11 +68,13 @@
             background-color: transparent;
             width: 100%;
             height: 100%;
+            border-radius: 5px; /* Match container's inner radius */
         }
         
         #ui-container {
-            width: 95%;
-            max-width: 500px;
+            /* FIX: Use responsive width to match the game container */
+            width: 500px;
+            max-width: 90vw;
             margin-top: 15px;
             padding: 10px;
             box-sizing: border-box;
@@ -137,6 +143,8 @@
             }
             #ui-container {
                 justify-content: center; /* Center items for a better look when wrapped */
+                font-size: 16px; /* Slightly smaller font to help with wrapping */
+                gap: 8px;
             }
             #restart-button, #audio-toggle-button {
                 padding: 10px 15px; /* Bigger button for easier tapping */
@@ -155,7 +163,7 @@
             <h2>How to Play</h2>
             <ul>
                 <li>Match 3+ bubbles to score.</li>
-                <li>Clear all bubbles to win a huge bonus!</li>
+                <li>Clear all bubbles to level up instantly!</li>
                 <li>Level up by reaching score milestones!</li>
                 <li>A powerful Bomb Bubble may appear to clear a large area!</li>
                 <li>An extra life bubble may appear. Pop it to remove a miss!</li>
@@ -214,6 +222,7 @@ const ALL_COLORS = {
     3: ['#c0c0c0', '#ffd700', '#b87333', '#738b9c', '#8a7f8d', '#987f69']
 };
 const LEVEL_UP_SCORES = { 1: 5000, 2: 10000 };
+const MAX_LEVEL = 3;
 const SPECIALS = { 'RAINBOW': 'rainbow', 'LIFE': 'life', 'BOMB': 'bomb' };
 const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
 
@@ -269,7 +278,8 @@ const soundGenerators = {
     click: async actx => { const d=0.05,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=Math.sin(6.28*2e3*p)*Math.pow(1-p,4)}return b;},
     shick: async actx => { const d=0.08,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++)c[i]=(Math.random()*2-1)*Math.pow(1-i/c.length,10);const o=new OfflineAudioContext(1,actx.sampleRate*d,actx.sampleRate),s=o.createBufferSource();s.buffer=b;const h=o.createBiquadFilter();h.type='highpass';h.frequency.value=1500;const p=o.createBiquadFilter();p.type='bandpass';p.frequency.value=4e3;p.Q.value=1.5;s.connect(h).connect(p).connect(o.destination);s.start();return await o.startRendering();},
     shoot: async actx => { const d=0.2,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=(Math.random()*2-1)*Math.pow(1-p,2)*.3+Math.sin(6.28*(2e3-p*1800)*p)*Math.pow(1-p,2)*.7}return b;},
-    pop: async actx => { const d=0.1,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=Math.sin(6.28*(600-p*400)*p)*Math.pow(1-p,2)}return b;},
+    // MODIFIED: New sound generator for a "wet plop" sound.
+    pop: async actx => { const d = 0.12, b = actx.createBuffer(1, actx.sampleRate * d, actx.sampleRate), c = b.getChannelData(0); for (let i = 0; i < c.length; i++) { const p = i / c.length, e = Math.pow(1 - p, 10), f = 400 * Math.pow(1 - p, 2.5), t = Math.sin(6.28 * f * (i / actx.sampleRate)), n = (Math.random() * 2 - 1) * 0.2; c[i] = (t + n) * e * 0.8; } const o = new OfflineAudioContext(1, actx.sampleRate * d, actx.sampleRate), s = o.createBufferSource(); s.buffer = b; const f = o.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(1000, 0); f.Q.setValueAtTime(1, 0); s.connect(f).connect(o.destination); s.start(); return await o.startRendering(); },
     bomb: async actx => { const d=0.8,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=(Math.random()*2-1)*Math.pow(1-p,4)+Math.sin(6.28*100*Math.pow(1-p,2)*p)*Math.pow(1-p,2)}return b;},
     life: async actx => { const d=0.3,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0),n1=Math.floor(actx.sampleRate*.1),n2=Math.floor(actx.sampleRate*.12);for(let i=0;i<n1;i++){const p=i/n1;c[i]=Math.sin(6.28*523.25*(i/actx.sampleRate))*Math.pow(1-p,2)*.8}for(let i=n2;i<c.length;i++){const p=(i-n2)/(c.length-n2);c[i]+=Math.sin(6.28*783.99*((i-n2)/actx.sampleRate))*Math.pow(1-p,2)*.8}return b;},
     levelUp: async actx => { const d=.1,n=[261.63,329.63,392,523.25],b=actx.createBuffer(1,actx.sampleRate*d*n.length,actx.sampleRate),c=b.getChannelData(0);for(let t=0;t<n.length;t++){const s=Math.floor(actx.sampleRate*d*t),e=s+Math.floor(actx.sampleRate*d);for(let i=s;i<e;i++){const p=(i-s)/(e-s);c[i]=Math.sin(6.28*n[t]*((i-s)/actx.sampleRate))*Math.pow(1-p,1.5)}}return b;},
@@ -310,8 +320,17 @@ function resetForNextLevel() {
             if (!((r%2===1)&&c===COLS-1)) grid[r][c]=createBubble(r, c);
         }
     }
-    grid[0][0] = createBubble(0, 0, '#ffffff', 'life');
-    grid[0][COLS - 1] = createBubble(0, COLS - 1, '#ffffff', 'life');
+    
+    const leftLifeRow = Math.floor(Math.random() * 2);
+    const leftLifeCol = Math.floor(Math.random() * 3);
+    grid[leftLifeRow][leftLifeCol] = createBubble(leftLifeRow, leftLifeCol, '#ffffff', 'life');
+
+    let rightLifeRow, rightLifeCol;
+    do {
+        rightLifeRow = Math.floor(Math.random() * 2);
+        rightLifeCol = COLS - 1 - Math.floor(Math.random() * 3);
+    } while (rightLifeRow === leftLifeRow && rightLifeCol === leftLifeCol);
+    grid[rightLifeRow][rightLifeCol] = createBubble(rightLifeRow, rightLifeCol, '#ffffff', 'life');
     
     playerBubble=generateNextBubble(); nextBubble=generateNextBubble(); 
     updateUI();
@@ -339,7 +358,7 @@ function updateUI() {
 
 // --- Drawing Functions ---
 function draw3DSphere(context, x, y, radius, baseStyle) {
-    if (typeof baseStyle === 'string') { context.fillStyle = hexToRgba(baseStyle, 0.75); } else { context.fillStyle = baseStyle; }
+    if (typeof baseStyle === 'string') { context.fillStyle = hexToRgba(baseStyle, 0.6); } else { context.fillStyle = baseStyle; }
     context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
     let glowGrad = context.createRadialGradient(x, y, 0, x, y, radius);
     glowGrad.addColorStop(0, 'rgba(255, 255, 255, 0.2)'); glowGrad.addColorStop(0.8, 'rgba(255, 255, 255, 0)');
@@ -362,9 +381,29 @@ function drawBubble(context, bubble) {
         context.stroke(); context.lineWidth = 1; return;
     }
     if (bubble.type === 'bomb') {
-        draw3DSphere(context, x, y, radius, '#333333');
-        context.fillStyle = '#999'; context.fillRect(x - radius*0.15, y - radius*0.8, radius*0.3, radius*0.3);
-        if(Math.random() < 0.5) { bombSparks.push({ x: x, y: y - radius * 0.8, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2 - 1, life: 0, duration: 20, color: Math.random() < 0.5 ? 'yellow' : 'orange' }); }
+        // Body of the bomb
+        context.fillStyle = '#222222';
+        context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
+        let shadowGrad = context.createRadialGradient(x + radius*0.4, y + radius*0.5, radius*0.5, x, y, radius*1.5);
+        shadowGrad.addColorStop(0, 'rgba(0,0,0,0.4)'); shadowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        context.fillStyle = shadowGrad; context.beginPath(); context.arc(x, y, radius, 0, Math.PI*2); context.fill();
+        
+        // Metal fuse holder
+        const topY = y - radius * 0.7;
+        const holderWidth = radius * 0.4;
+        const holderHeight = radius * 0.3;
+        context.fillStyle = '#888888';
+        context.fillRect(x - holderWidth/2, topY - holderHeight/2, holderWidth, holderHeight);
+        context.fillStyle = '#AAAAAA';
+        context.fillRect(x - holderWidth/2, topY - holderHeight/2, holderWidth, holderHeight*0.3);
+
+        // Wick
+        const fuseTipY = topY - radius * 0.3;
+        context.strokeStyle = '#A5694B';
+        context.lineWidth = 3;
+        context.beginPath(); context.moveTo(x, topY); context.lineTo(x, fuseTipY); context.stroke();
+        context.lineWidth = 1;
+        if(Math.random() < 0.7) { bombSparks.push({ x: x, y: fuseTipY, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2 - 1.5, life: 0, duration: 20, color: Math.random() < 0.5 ? 'yellow' : 'orange' }); }
         return;
     }
     if (bubble.type === 'rainbow') {
@@ -393,7 +432,7 @@ function drawShockwaves() { ctx.save(); shockwaves.forEach(sw => { const easeOut
 
 // --- Update & Game Logic ---
 function updatePopAnimations() { for(let i=popAnimations.length-1;i>=0;i--){const p=popAnimations[i];p.life++;p.x+=p.vx;p.y+=p.vy;p.vx*=0.97;p.vy*=0.97;if(p.life>=p.duration){popAnimations.splice(i,1)}}}
-function updateFloatingPoints() { for(let i=floatingPoints.length-1;i>=0;i--){const fp=floatingPoints[i];fp.life++;fp.y+=fp.vy;if(fp.life>=p.duration){floatingPoints.splice(i,1)}}}
+function updateFloatingPoints() { for(let i=floatingPoints.length-1;i>=0;i--){const fp=floatingPoints[i];fp.life++;fp.y+=fp.vy;if(fp.life>=fp.duration){floatingPoints.splice(i,1)}}}
 function updateFireworks() { for(let i=fireworks.length-1;i>=0;i--){const p=fireworks[i];p.x+=p.vx;p.y+=p.vy;p.vy+=0.02;p.size*=0.98;if(p.size<0.5)fireworks.splice(i,1)} if(Math.random()<0.05)createFirework();}
 function updateRain() { for(let i=rain.length-1;i>=0;i--){const p=rain[i];p.y+=p.speed;if(p.y>canvas.height){p.y=-p.len;p.x=Math.random()*canvas.width}};}
 function updateBombSparks() { for(let i=bombSparks.length-1;i>=0;i--){const s=bombSparks[i];s.life++;s.x+=s.vx;s.y+=s.vy;if(s.life>=s.duration)bombSparks.splice(i,1)}}
@@ -405,7 +444,20 @@ function update() {
     rowDropTimer++; if(rowDropTimer >= TIME_UNTIL_ROW_DROP){ addNewRow(); }
     bombTimer++; if(bombTimer >= BOMB_INTERVAL) { spawnBombBubble(); }
 }
-async function snapBubble(collidedCoords) { isFiring=false;playerBubble.vx=0;playerBubble.vy=0;let s=null; if(collidedCoords===null){let d=Infinity;for(let c=0;c<COLS;c++)if(!grid[0][c]){const D=Math.abs(playerBubble.x-(offsetX+c*HEX_WIDTH));if(D<d){d=D;s={r:0,c}}}} else{const n=getNeighbors(collidedCoords.r,collidedCoords.c);let d=Infinity;for(const N of n)if(!grid[N.r][N.c]){const x=offsetX+N.c*HEX_WIDTH+(N.r%2)*BUBBLE_RADIUS,y=offsetY+N.r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s=N}}} if(s===null){let d=Infinity;for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(!grid[r][c]&&!(r%2===1&&c===COLS-1)){const x=offsetX+c*HEX_WIDTH+(r%2)*BUBBLE_RADIUS,y=offsetY+r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s={r,c}}}} if(s){grid[s.r][s.c]=createBubble(s.r,s.c,playerBubble.color,playerBubble.type);await handlePostSnap(s.r,s.c)}else{prepareNextShot()}}
+
+async function snapBubble(collidedCoords) { 
+    sizzleSoundSource = stopLoopingSound(sizzleSoundSource);
+    rainbowSoundSource = stopLoopingSound(rainbowSoundSource);
+    
+    isFiring=false;
+    playerBubble.vx=0;playerBubble.vy=0;let s=null; 
+    if(collidedCoords===null){let d=Infinity;for(let c=0;c<COLS;c++)if(!grid[0][c]){const D=Math.abs(playerBubble.x-(offsetX+c*HEX_WIDTH));if(D<d){d=D;s={r:0,c}}}} 
+    else{const n=getNeighbors(collidedCoords.r,collidedCoords.c);let d=Infinity;for(const N of n)if(!grid[N.r][N.c]){const x=offsetX+N.c*HEX_WIDTH+(N.r%2)*BUBBLE_RADIUS,y=offsetY+N.r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s=N}}} 
+    if(s===null){let d=Infinity;for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(!grid[r][c]&&!(r%2===1&&c===COLS-1)){const x=offsetX+c*HEX_WIDTH+(r%2)*BUBBLE_RADIUS,y=offsetY+r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s={r,c}}}} 
+    if(s){grid[s.r][s.c]=createBubble(s.r,s.c,playerBubble.color,playerBubble.type);await handlePostSnap(s.r,s.c)}
+    else{prepareNextShot()}
+}
+
 function createFloatingPoints(text, x, y) { floatingPoints.push({text,x,y,life:0,duration:FLOATING_POINTS_DURATION,vy:-0.7});}
 function createPopEffect(x, y, color) { for(let i=0;i<POP_PARTICLE_COUNT;i++){const angle=Math.random()*Math.PI*2;const speed=Math.random()*2+1;popAnimations.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:0,duration:POP_PARTICLE_DURATION,color:color||'#ccc',size:Math.random()*5+3});}}
 function popBubbles(bubblesToPop) { bubblesToPop.forEach(b=>{if(grid[b.r]?.[b.c]){const bubble=grid[b.r][b.c];createPopEffect(bubble.x,bubble.y,bubble.color);grid[b.r][b.c]=null}});}
@@ -417,10 +469,21 @@ async function handlePostSnap(row, col) {
 
     if (landedBubble && landedBubble.type === SPECIALS.RAINBOW) {
         const neighbors = getNeighbors(row, col).map(n => grid[n.r]?.[n.c]).filter(b => b && b.type === 'normal');
-        if (neighbors.length > 0) {
-            const colorCounts = {};
-            neighbors.forEach(n => { colorCounts[n.color] = (colorCounts[n.color] || 0) + 1; });
-            landedBubble.color = Object.keys(colorCounts).reduce((a, b) => colorCounts[a] > colorCounts[b] ? a : b);
+        const candidateColors = new Set(neighbors.map(n => n.color));
+        let bestColor = null;
+        let maxMatchSize = 0;
+
+        for (const color of candidateColors) {
+            landedBubble.color = color;
+            const potentialMatches = findMatches(row, col);
+            if (potentialMatches.length > maxMatchSize) {
+                maxMatchSize = potentialMatches.length;
+                bestColor = color;
+            }
+        }
+        
+        if (bestColor && maxMatchSize >= 3) {
+            landedBubble.color = bestColor;
         } else {
             landedBubble.color = currentColors[Math.floor(Math.random() * currentColors.length)];
         }
@@ -441,7 +504,7 @@ async function handlePostSnap(row, col) {
                 const bubble = grid[coord.r]?.[coord.c];
                 if (bubble) {
                     if (bubble.type === 'life') lifeBubblePopped = true;
-                    else playSound('pop', { gain: 0.5 });
+                    else playSound('pop', { gain: 0.6 }); // Increased gain for new pop
                 }
             });
 
@@ -467,7 +530,7 @@ async function handlePostSnap(row, col) {
             const bubble = grid[coord.r]?.[coord.c];
             if (bubble) {
                 if (bubble.type === 'life') lifeBubbleDropped = true;
-                else playSound('pop', { gain: 0.4 });
+                else playSound('pop', { gain: 0.5 }); // Lower gain for dropped bubbles
             }
         });
         if (lifeBubbleDropped) {
@@ -485,7 +548,21 @@ async function handlePostSnap(row, col) {
     if(!popsOccurred) { shotsFired++;} 
     updateUI(); 
 
-    if (level < 3 && score >= LEVEL_UP_SCORES[level]) {
+    if(isGridEmpty()){
+        if (level < MAX_LEVEL) {
+            level++;
+            gameState = 'levelup';
+            playSound('levelUp', { gain: 0.6 });
+            currentColors = ALL_COLORS[level];
+            levelUpMessageEl.innerText = `Board Cleared! Moving to Level ${level}!`;
+            levelUpOverlay.style.display = 'flex';
+        } else {
+            endGame(true);
+        }
+        return;
+    }
+
+    if (level < MAX_LEVEL && score >= LEVEL_UP_SCORES[level]) {
         level++;
         gameState = 'levelup';
         playSound('levelUp', { gain: 0.5 });
@@ -495,14 +572,12 @@ async function handlePostSnap(row, col) {
         return;
     }
     
-    if(isGridEmpty()){ endGame(true); return; }
     for (let c=0; c<COLS; c++) if (grid[ROWS-1][c]){ endGame(false); return; }
     if (shotsFired >= SHOTS_UNTIL_LOSS) { endGame(false); return;} 
     prepareNextShot();
 }
 
 function handleBombExplosion(row, col) {
-    sizzleSoundSource = stopLoopingSound(sizzleSoundSource);
     playSound('bomb', { gain: 0.6 });
     let affectedCoords = [{r: row, c: col}, ...getNeighbors(row, col)];
     let points = 0;
@@ -584,7 +659,39 @@ function prepareNextShot() {
     updateUI();
 }
 function getNeighbors(r,c) { const p=r%2,d=[{dr:0,dc:1},{dr:0,dc:-1},{dr:-1,dc:p-1},{dr:-1,dc:p},{dr:1,dc:p-1},{dr:1,dc:p}],n=[];for(const i of d){const nr=r+i.dr,nc=c+i.dc;if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&!(nr%2===1&&nc===COLS-1))n.push({r:nr,c:nc})}return n}
-function findMatches(startR, startC) { const startBubble = grid[startR][startC]; if (!startBubble) return []; let potentialMatches = new Map(); let toVisit = [{ r: startR, c: startC }]; let visited = new Set([`${startR},${startC}`]); while (toVisit.length > 0) { const current = toVisit.shift(); const bubble = grid[current.r][current.c]; getNeighbors(current.r, current.c).forEach(nCoord => { const neighbor = grid[nCoord.r]?.[nCoord.c]; if (neighbor && !visited.has(`${nCoord.r},${nCoord.c}`)) { if (neighbor.type === 'life') { visited.add(`${nCoord.r},${nCoord.c}`); toVisit.push(nCoord); } else if (startBubble.type === 'life' || neighbor.color === startBubble.color) { visited.add(`${nCoord.r},${nCoord.c}`); toVisit.push(nCoord); } } }); } visited.forEach(coordStr => { const [r, c] = coordStr.split(',').map(Number); const bubble = grid[r][c]; if(bubble){if (bubble.type !== 'life') { if (!potentialMatches.has(bubble.color)) { potentialMatches.set(bubble.color, []); } potentialMatches.get(bubble.color).push({ r, c }); }} }); const lifeBubbles = Array.from(visited).filter(coordStr => { const [r, c] = coordStr.split(',').map(Number); return grid[r][c]?.type === 'life'; }).map(coordStr => { const [r, c] = coordStr.split(',').map(Number); return {r,c}; }); for (const [color, bubbles] of potentialMatches.entries()) { if (bubbles.length + lifeBubbles.length >= 3) { return [...bubbles, ...lifeBubbles]; } } return [];}
+
+function findMatches(startR, startC) {
+    const startBubble = grid[startR][startC];
+    if (!startBubble) return [];
+
+    const matchColor = startBubble.color;
+    const toVisit = [{ r: startR, c: startC }];
+    const visited = new Set([`${startR},${startC}`]);
+    const matches = [];
+
+    while (toVisit.length > 0) {
+        const current = toVisit.shift();
+        matches.push(current);
+
+        getNeighbors(current.r, current.c).forEach(nCoord => {
+            const coordStr = `${nCoord.r},${nCoord.c}`;
+            if (!visited.has(coordStr)) {
+                const neighbor = grid[nCoord.r]?.[nCoord.c];
+                if (neighbor && (neighbor.color === matchColor || neighbor.type === 'life')) {
+                    visited.add(coordStr);
+                    toVisit.push(nCoord);
+                }
+            }
+        });
+    }
+
+    const hasColorBubble = matches.some(coord => grid[coord.r][coord.c]?.type !== 'life');
+    if (matches.length >= 3 && hasColorBubble) {
+        return matches;
+    }
+
+    return [];
+}
 async function findFloatingBubbles() { await new Promise(r => setTimeout(r, 50)); const o=new Set(),q=[];for(let c=0;c<COLS;c++)if(grid[0][c]){q.push({r:0,c:c});o.add(`0,${c}`)}let h=0;while(h<q.length){const u=q[h++];for(const n of getNeighbors(u.r,u.c))if(grid[n.r][n.c]&&!o.has(`${n.r},${n.c}`)){o.add(`${n.r},${n.c}`);q.push(n)}}const f=[];for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(grid[r][c]&&!o.has(`${r},${c}`))f.push({r,c});return f}
 function isGridEmpty() { for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(grid[r][c])return false; return true;}
 function endGame(isWinner) {
@@ -593,9 +700,13 @@ function endGame(isWinner) {
     sizzleSoundSource = stopLoopingSound(sizzleSoundSource);
     rainbowSoundSource = stopLoopingSound(rainbowSoundSource);
     if(isWinner){
-        endMessageEl.innerText = 'You Win!'; score += 1500; playSound('win', { gain: 0.5 }); createFirework();
+        endMessageEl.innerText = 'You Win!';
+        playSound('win', { gain: 0.5 });
+        createFirework();
     } else {
-        endMessageEl.innerText = 'Sorry, you lost!'; playSound('lose', { gain: 0.5 }); createRain();
+        endMessageEl.innerText = 'Sorry, you lost!';
+        playSound('lose', { gain: 0.5 });
+        createRain();
     }
     finalScoreEl.innerText = score;
     gameOverEl.style.display='flex';
@@ -617,9 +728,11 @@ function handleAimUpdate(clientX,clientY) {
         lastAimAngle = currentAngle;
     }
 }
+
 function handleFire() {
     if(gameState!=='playing'||isFiring||aim.y>playerBubble.y-20)return;
     playSound('shoot', { gain: 0.4 });
+
     const angle=Math.atan2(aim.y-playerBubble.y,aim.x-playerBubble.x),speed=15;
     playerBubble.vx=Math.cos(angle)*speed;
     playerBubble.vy=Math.sin(angle)*speed;
@@ -647,7 +760,7 @@ audioToggleButton.addEventListener('click', () => {
         initAudio();
         playSound('click', {gain: 0.4});
         if (playerBubble && playerBubble.type === 'bomb') sizzleSoundSource = playLoopingSound('sizzle', { gain: 0.3 });
-        if (playerBubble && playerBubble.type === 'rainbow') rainbowSoundSource = playLoopingSound('rainbow', { gain: 0.5 });
+        if (playerBubble && playerBubble.type === 'rainbow') { rainbowSoundSource = playLoopingSound('rainbow', { gain: 0.5 }); }
     }
 });
 
