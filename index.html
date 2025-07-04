@@ -48,7 +48,6 @@
 
         #game-container {
             position: relative;
-            /* FIX: Use aspect-ratio to maintain proportions and prevent stretching */
             aspect-ratio: 500 / 600;
             width: 500px; /* Define ideal width */
             max-width: 90vw; /* Shrink on small viewports */
@@ -61,6 +60,7 @@
             box-shadow: 0 0 20px rgba(0,0,0,0.2);
             border-radius: 10px;
             z-index: 1;
+            transition: background-color 0.5s ease; /* Smooth background transition */
         }
 
         canvas {
@@ -72,7 +72,6 @@
         }
         
         #ui-container {
-            /* FIX: Use responsive width to match the game container */
             width: 500px;
             max-width: 90vw;
             margin-top: 15px;
@@ -187,6 +186,7 @@
     <div id="ui-container">
         <div>Level: <span id="level">1</span></div>
         <div>Score: <span id="score">0</span></div>
+        <div>High Score: <span id="high-score">0</span></div>
         <div>Misses: <span id="miss-counter">0</span>/5</div>
         <div class="next-bubble-area">
             <span>Next:</span>
@@ -200,8 +200,10 @@
 // --- Game Setup & Constants ---
 const bgCanvas = document.getElementById('backgroundCanvas'), bgCtx = bgCanvas.getContext('2d');
 const canvas = document.getElementById('gameCanvas'), ctx = canvas.getContext('2d');
+const gameContainer = document.getElementById('game-container');
 const nextBubbleCanvas = document.getElementById('nextBubbleCanvas'), nextCtx = nextBubbleCanvas.getContext('2d');
 const scoreEl = document.getElementById('score'), levelEl = document.getElementById('level'), gameOverEl = document.getElementById('game-over');
+const highScoreEl = document.getElementById('high-score');
 const missCounterEl = document.getElementById('miss-counter');
 const finalScoreEl = document.getElementById('finalScore'), rulesOverlay = document.getElementById('rules-overlay');
 const startOverlay = document.getElementById('start-overlay'), endMessageEl = document.getElementById('end-message');
@@ -209,19 +211,40 @@ const levelUpOverlay = document.getElementById('level-up-overlay'), levelUpMessa
 const audioToggleButton = document.getElementById('audio-toggle-button');
 
 const COLS = 12, ROWS = 14, SHOTS_UNTIL_LOSS = 5;
-const TIME_UNTIL_ROW_DROP = 20 * 60, BOMB_INTERVAL = 25 * 60;
+const BOMB_INTERVAL = 25 * 60; // Bomb every 25 seconds
+const LEVEL_ROW_DROP_SPEEDS = {
+    1: 15 * 60, // Level 1: 15 seconds
+    2: 12 * 60, // Level 2: 12 seconds
+    3: 8 * 60   // Level 3: 8 seconds
+};
 const FLOATING_POINTS_DURATION = 75, POP_PARTICLE_COUNT = 8, POP_PARTICLE_DURATION = 40;
-const PADDING = 5, BUBBLE_RADIUS = (canvas.width - PADDING * 2) / (COLS * 2);
+const PADDING = 5;
+const BUBBLE_RADIUS = (canvas.width - PADDING * 2) / (COLS * 2 + 1);
 const HEX_WIDTH = BUBBLE_RADIUS * 2, HEX_HEIGHT = Math.sqrt(3) * BUBBLE_RADIUS;
 const offsetX = PADDING + BUBBLE_RADIUS, offsetY = PADDING + BUBBLE_RADIUS;
 const GAME_OVER_LINE_Y = canvas.height - BUBBLE_RADIUS * 4;
 
 const ALL_COLORS = {
+    // Level 1: Bright & Primary
     1: ['#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#A133FF', '#FFFF33'],
-    2: ['#b1e5f2', '#f7c5d8', '#c8e6c9', '#fff9c4', '#d1c4e9', '#ffccbc'],
-    3: ['#c0c0c0', '#ffd700', '#b87333', '#738b9c', '#8a7f8d', '#987f69']
+    // Level 2: New "Easter" Pastel Palette - Bright, clear, and distinct
+    2: ['#FFC4E1', '#A1C9F4', '#B2F7C3', '#FFF7AE', '#D9BFF5', '#FFD8B1'], // Pink, Blue, Green, Yellow, Purple, Orange
+    // Level 3: New Metallic Palette - Rich, distinct hues
+    3: ['#FFD700', '#C0C0C0', '#CD7F32', '#6A738B', '#50C878', '#E39695'] // Gold, Silver, Bronze, Steel Blue, Emerald, Rose Gold
 };
-const LEVEL_UP_SCORES = { 1: 5000, 2: 10000 };
+
+const LEVEL_RAINBOW_COLORS = {
+    1: ['#FF5733', '#FFFF33', '#33FF57', '#3357FF', '#A133FF'], // Classic Rainbow
+    2: ['#FFC4E1', '#FFF7AE', '#B2F7C3', '#A1C9F4', '#D9BFF5'], // Pastel Rainbow
+    3: ['#FFD700', '#E39695', '#50C878', '#6A738B', '#C0C0C0']  // Metallic Rainbow
+};
+
+const LEVEL_UP_SCORES = { 1: 3500, 2: 8500 };
+const LEVEL_BACKGROUNDS = {
+    1: 'rgba(214, 232, 250, 0.65)', // Original light blue
+    2: 'rgba(50, 60, 90, 0.7)',     // Dark navy for pastels
+    3: 'rgba(80, 75, 70, 0.75)'      // Dark warm grey for metallics
+};
 const MAX_LEVEL = 3;
 const SPECIALS = { 'RAINBOW': 'rainbow', 'LIFE': 'life', 'BOMB': 'bomb' };
 const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
@@ -278,8 +301,7 @@ const soundGenerators = {
     click: async actx => { const d=0.05,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=Math.sin(6.28*2e3*p)*Math.pow(1-p,4)}return b;},
     shick: async actx => { const d=0.08,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++)c[i]=(Math.random()*2-1)*Math.pow(1-i/c.length,10);const o=new OfflineAudioContext(1,actx.sampleRate*d,actx.sampleRate),s=o.createBufferSource();s.buffer=b;const h=o.createBiquadFilter();h.type='highpass';h.frequency.value=1500;const p=o.createBiquadFilter();p.type='bandpass';p.frequency.value=4e3;p.Q.value=1.5;s.connect(h).connect(p).connect(o.destination);s.start();return await o.startRendering();},
     shoot: async actx => { const d=0.2,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=(Math.random()*2-1)*Math.pow(1-p,2)*.3+Math.sin(6.28*(2e3-p*1800)*p)*Math.pow(1-p,2)*.7}return b;},
-    // MODIFIED: New sound generator for a "wet plop" sound.
-    pop: async actx => { const d = 0.12, b = actx.createBuffer(1, actx.sampleRate * d, actx.sampleRate), c = b.getChannelData(0); for (let i = 0; i < c.length; i++) { const p = i / c.length, e = Math.pow(1 - p, 10), f = 400 * Math.pow(1 - p, 2.5), t = Math.sin(6.28 * f * (i / actx.sampleRate)), n = (Math.random() * 2 - 1) * 0.2; c[i] = (t + n) * e * 0.8; } const o = new OfflineAudioContext(1, actx.sampleRate * d, actx.sampleRate), s = o.createBufferSource(); s.buffer = b; const f = o.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(1000, 0); f.Q.setValueAtTime(1, 0); s.connect(f).connect(o.destination); s.start(); return await o.startRendering(); },
+    pop: async actx => { const d = 0.15, o = new OfflineAudioContext(1, actx.sampleRate * d, actx.sampleRate); const t = o.currentTime; const osc = o.createOscillator(); osc.type = 'sine'; osc.frequency.setValueAtTime(200, t); osc.frequency.exponentialRampToValueAtTime(50, t + 0.08); const oscGain = o.createGain(); oscGain.gain.setValueAtTime(0.7, t); oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.08); osc.connect(oscGain); const noiseDur = 0.02; const noiseBuf = actx.createBuffer(1, actx.sampleRate * noiseDur, actx.sampleRate); const noiseData = noiseBuf.getChannelData(0); for (let i = 0; i < noiseData.length; i++) noiseData[i] = Math.random() * 2 - 1; const noise = o.createBufferSource(); noise.buffer = noiseBuf; const noiseGain = o.createGain(); noiseGain.gain.setValueAtTime(0.1, t + 0.06); noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.06 + noiseDur); noise.connect(noiseGain); const lowpass = o.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = 800; oscGain.connect(lowpass); noiseGain.connect(lowpass); lowpass.connect(o.destination); osc.start(t); noise.start(t + 0.06); return await o.startRendering(); },
     bomb: async actx => { const d=0.8,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0);for(let i=0;i<c.length;i++){const p=i/c.length;c[i]=(Math.random()*2-1)*Math.pow(1-p,4)+Math.sin(6.28*100*Math.pow(1-p,2)*p)*Math.pow(1-p,2)}return b;},
     life: async actx => { const d=0.3,b=actx.createBuffer(1,actx.sampleRate*d,actx.sampleRate),c=b.getChannelData(0),n1=Math.floor(actx.sampleRate*.1),n2=Math.floor(actx.sampleRate*.12);for(let i=0;i<n1;i++){const p=i/n1;c[i]=Math.sin(6.28*523.25*(i/actx.sampleRate))*Math.pow(1-p,2)*.8}for(let i=n2;i<c.length;i++){const p=(i-n2)/(c.length-n2);c[i]+=Math.sin(6.28*783.99*((i-n2)/actx.sampleRate))*Math.pow(1-p,2)*.8}return b;},
     levelUp: async actx => { const d=.1,n=[261.63,329.63,392,523.25],b=actx.createBuffer(1,actx.sampleRate*d*n.length,actx.sampleRate),c=b.getChannelData(0);for(let t=0;t<n.length;t++){const s=Math.floor(actx.sampleRate*d*t),e=s+Math.floor(actx.sampleRate*d);for(let i=s;i<e;i++){const p=(i-s)/(e-s);c[i]=Math.sin(6.28*n[t]*((i-s)/actx.sampleRate))*Math.pow(1-p,1.5)}}return b;},
@@ -297,12 +319,19 @@ async function createAllSounds() {
 }
 
 // --- Game State ---
-let grid, playerBubble, nextBubble, score, shotsFired, rowDropTimer, bombTimer, newRowsAdded;
+let grid, playerBubble, nextBubble, score, highScore, shotsFired, rowDropTimer, bombTimer, newRowsDropped;
 let isFiring = false, aim = { x: canvas.width / 2, y: 0 };
 let popAnimations = [], floatingPoints = [], fireworks = [], rain = [], bombSparks = [], shockwaves = [];
 let gameState = 'rules';
 let backgroundBubbles = [];
 let level, currentColors, rainbowGradientOffset;
+
+// New function to update level-specific visuals
+function updateLevelStyles(newLevel) {
+    if (gameContainer && LEVEL_BACKGROUNDS[newLevel]) {
+        gameContainer.style.backgroundColor = LEVEL_BACKGROUNDS[newLevel];
+    }
+}
 
 function hexToRgba(hex, alpha) { if(!hex) return `rgba(0,0,0,${alpha})`; const r=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex); return r?`rgba(${parseInt(r[1],16)},${parseInt(r[2],16)},${parseInt(r[3],16)},${alpha})`:`rgba(0,0,0,${alpha})`;}
 function darkenColor(hex, percent) { if (!hex) return '#000000'; let f=parseInt(hex.slice(1),16),t=percent<0?0:255,p=percent<0?percent*-1:percent,R=f>>16,G=f>>8&0x00FF,B=f&0x0000FF; return "#"+(0x1000000+(Math.round((t-R)*p)+R)*0x10000+(Math.round((t-G)*p)+G)*0x100+(Math.round((t-B)*p)+B)).toString(16).slice(1);}
@@ -310,29 +339,32 @@ function createBubble(row, col, color=null, type='normal') { if(color===null)col
 function generateNextBubble() { let color = currentColors[Math.floor(Math.random()*currentColors.length)], type='normal'; if(Math.random()<0.05){type=SPECIALS.RAINBOW;color=null} return {x:canvas.width/2,y:canvas.height-BUBBLE_RADIUS,color,type,vx:0,vy:0};}
 
 function resetForNextLevel() {
-    grid = Array(ROWS).fill(null).map(()=>Array(COLS).fill(null));
+    grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
+    shotsFired = 0; // Reset miss counter for the new level
     isFiring = false;
-    rowDropTimer=0; bombTimer=0; newRowsAdded = 0; aimClickCounter = 0;
-    popAnimations=[]; floatingPoints=[]; fireworks=[]; rain=[]; bombSparks=[]; shockwaves=[];
-    
-    for (let r=0;r<4;r++) {
-        for (let c=0;c<COLS;c++) {
-            if (!((r%2===1)&&c===COLS-1)) grid[r][c]=createBubble(r, c);
+    rowDropTimer = 0; bombTimer = 0; aimClickCounter = 0; newRowsDropped = 0;
+    popAnimations = []; floatingPoints = []; fireworks = []; rain = []; bombSparks = []; shockwaves = [];
+
+    const initialPaletteSize = Math.min(currentColors.length, 4);
+    const initialColorPalette = currentColors.slice(0, initialPaletteSize);
+
+    for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < COLS; c++) {
+            const randomColor = initialColorPalette[Math.floor(Math.random() * initialColorPalette.length)];
+            grid[r][c] = createBubble(r, c, randomColor);
         }
     }
-    
-    const leftLifeRow = Math.floor(Math.random() * 2);
-    const leftLifeCol = Math.floor(Math.random() * 3);
-    grid[leftLifeRow][leftLifeCol] = createBubble(leftLifeRow, leftLifeCol, '#ffffff', 'life');
 
-    let rightLifeRow, rightLifeCol;
-    do {
-        rightLifeRow = Math.floor(Math.random() * 2);
-        rightLifeCol = COLS - 1 - Math.floor(Math.random() * 3);
-    } while (rightLifeRow === leftLifeRow && rightLifeCol === leftLifeCol);
-    grid[rightLifeRow][rightLifeCol] = createBubble(rightLifeRow, rightLifeCol, '#ffffff', 'life');
-    
-    playerBubble=generateNextBubble(); nextBubble=generateNextBubble(); 
+    const midPoint = Math.floor(COLS / 2);
+    const r1 = Math.floor(Math.random() * 2);
+    const c1 = Math.floor(Math.random() * midPoint);
+    const r2 = Math.floor(Math.random() * 2);
+    const c2 = midPoint + Math.floor(Math.random() * (COLS - midPoint));
+    grid[r1][c1] = createBubble(r1, c1, '#ffffff', 'life');
+    grid[r2][c2] = createBubble(r2, c2, '#ffffff', 'life');
+
+    playerBubble = generateNextBubble();
+    nextBubble = generateNextBubble();
     updateUI();
 }
 
@@ -340,7 +372,9 @@ function init() {
     sizzleSoundSource = stopLoopingSound(sizzleSoundSource);
     rainbowSoundSource = stopLoopingSound(rainbowSoundSource);
     score=0; shotsFired=0;
+    highScore = parseInt(localStorage.getItem('bubblePopHighScore')) || 0;
     level = 1;
+    updateLevelStyles(level);
     currentColors = ALL_COLORS[level];
     rainbowGradientOffset = 0;
     resetForNextLevel();
@@ -350,6 +384,7 @@ function init() {
 
 function updateUI() { 
     scoreEl.innerText=score; 
+    highScoreEl.innerText = highScore;
     levelEl.innerText = level;
     missCounterEl.innerText = shotsFired; 
     nextCtx.clearRect(0,0,nextBubbleCanvas.width,nextBubbleCanvas.height); 
@@ -358,7 +393,8 @@ function updateUI() {
 
 // --- Drawing Functions ---
 function draw3DSphere(context, x, y, radius, baseStyle) {
-    if (typeof baseStyle === 'string') { context.fillStyle = hexToRgba(baseStyle, 0.6); } else { context.fillStyle = baseStyle; }
+    const opacity = (level > 1) ? 0.80 : 0.65;
+    if (typeof baseStyle === 'string') { context.fillStyle = hexToRgba(baseStyle, opacity); } else { context.fillStyle = baseStyle; }
     context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
     let glowGrad = context.createRadialGradient(x, y, 0, x, y, radius);
     glowGrad.addColorStop(0, 'rgba(255, 255, 255, 0.2)'); glowGrad.addColorStop(0.8, 'rgba(255, 255, 255, 0)');
@@ -381,34 +417,31 @@ function drawBubble(context, bubble) {
         context.stroke(); context.lineWidth = 1; return;
     }
     if (bubble.type === 'bomb') {
-        // Body of the bomb
         context.fillStyle = '#222222';
         context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
-        let shadowGrad = context.createRadialGradient(x + radius*0.4, y + radius*0.5, radius*0.5, x, y, radius*1.5);
+        let shadowGrad = context.createRadialGradient(x + radius * 0.4, y + radius * 0.5, radius * 0.5, x, y, radius * 1.5);
         shadowGrad.addColorStop(0, 'rgba(0,0,0,0.4)'); shadowGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        context.fillStyle = shadowGrad; context.beginPath(); context.arc(x, y, radius, 0, Math.PI*2); context.fill();
-        
-        // Metal fuse holder
-        const topY = y - radius * 0.7;
-        const holderWidth = radius * 0.4;
-        const holderHeight = radius * 0.3;
-        context.fillStyle = '#888888';
-        context.fillRect(x - holderWidth/2, topY - holderHeight/2, holderWidth, holderHeight);
-        context.fillStyle = '#AAAAAA';
-        context.fillRect(x - holderWidth/2, topY - holderHeight/2, holderWidth, holderHeight*0.3);
-
-        // Wick
-        const fuseTipY = topY - radius * 0.3;
-        context.strokeStyle = '#A5694B';
-        context.lineWidth = 3;
-        context.beginPath(); context.moveTo(x, topY); context.lineTo(x, fuseTipY); context.stroke();
+        context.fillStyle = shadowGrad; context.fill();
+        let highlightGrad = context.createRadialGradient(x - radius * 0.4, y - radius * 0.5, 0, x - radius * 0.4, y - radius * 0.5, radius * 0.6);
+        highlightGrad.addColorStop(0, 'rgba(255, 255, 255, 0.1)'); highlightGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        context.fillStyle = highlightGrad; context.fill();
+        const capHeight = radius * 0.4, capWidth = radius * 0.55, capY = y - radius * 0.8, capX = x - capWidth / 2;
+        context.fillStyle = '#888888'; context.fillRect(capX, capY - capHeight, capWidth, capHeight);
+        context.fillStyle = '#AAAAAA'; context.fillRect(capX, capY - capHeight, capWidth, capHeight * 0.3);
+        const fuseBaseY = capY - capHeight, fuseLength = radius * 0.8, fuseTipY = fuseBaseY - fuseLength;
+        context.strokeStyle = '#A5694B'; context.lineWidth = 3;
+        context.beginPath(); context.moveTo(x, fuseBaseY); context.lineTo(x, fuseTipY); context.stroke();
         context.lineWidth = 1;
-        if(Math.random() < 0.7) { bombSparks.push({ x: x, y: fuseTipY, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2 - 1.5, life: 0, duration: 20, color: Math.random() < 0.5 ? 'yellow' : 'orange' }); }
+        if (bubble === playerBubble && !isFiring) {
+            if (Math.random() < 0.7) {
+                bombSparks.push({ x: x, y: fuseTipY, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2 - 1.5, life: 0, duration: 20, color: Math.random() < 0.5 ? 'yellow' : 'orange' });
+            }
+        }
         return;
     }
     if (bubble.type === 'rainbow') {
         let rainbowGrad = context.createLinearGradient(x - radius, y - radius, x + radius, y + radius);
-        const colors = currentColors;
+        const colors = LEVEL_RAINBOW_COLORS[level] || LEVEL_RAINBOW_COLORS[1]; // Use level-specific rainbow, fallback to 1
         const numColors = colors.length;
         for (let i = 0; i <= numColors * 2; i++) {
             const colorIndex = i % numColors;
@@ -428,7 +461,7 @@ function drawGameOverLine() { ctx.beginPath();ctx.moveTo(0,GAME_OVER_LINE_Y);ctx
 function drawFireworks() { fireworks.forEach(p=>{ctx.beginPath();ctx.fillStyle=p.color;ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill()});}
 function drawRain() { ctx.strokeStyle='rgba(174,194,224,0.5)'; ctx.lineWidth=2; rain.forEach(p=>{ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x,p.y+p.len);ctx.stroke()}); ctx.lineWidth=1;}
 function drawBombSparks() { bombSparks.forEach(s=>{ctx.fillStyle=s.color;ctx.fillRect(s.x,s.y,2,2)}); }
-function drawShockwaves() { ctx.save(); shockwaves.forEach(sw => { const easeOutQuad = t => t * (2 - t); const progress = easeOutQuad(sw.life / sw.duration); const fadeProgress = sw.life / sw.duration; const currentRadius = BUBBLE_RADIUS + (BUBBLE_RADIUS * 4) * progress; const alpha = 1 - fadeProgress; ctx.beginPath(); ctx.arc(sw.x, sw.y, currentRadius, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.7})`; ctx.lineWidth = 10 * alpha; ctx.stroke(); }); ctx.restore();}
+function drawShockwaves() { ctx.save(); shockwaves.forEach(sw => { const easeOutQuad = t => t * (2 - t); const progress = easeOutQuad(sw.life / sw.duration); const fadeProgress = sw.life / sw.duration; const currentRadius = BUBBLE_RADIUS + (BUBBLE_RADIUS * 5.5) * progress; const alpha = 1 - fadeProgress; ctx.beginPath(); ctx.arc(sw.x, sw.y, currentRadius, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.7})`; ctx.lineWidth = 10 * alpha; ctx.stroke(); }); ctx.restore();}
 
 // --- Update & Game Logic ---
 function updatePopAnimations() { for(let i=popAnimations.length-1;i>=0;i--){const p=popAnimations[i];p.life++;p.x+=p.vx;p.y+=p.vy;p.vx*=0.97;p.vy*=0.97;if(p.life>=p.duration){popAnimations.splice(i,1)}}}
@@ -441,7 +474,10 @@ function update() {
     updatePopAnimations(); updateFloatingPoints(); updateBombSparks(); updateShockwaves();
     rainbowGradientOffset = (rainbowGradientOffset + 0.005) % 1;
     if(isFiring){playerBubble.x+=playerBubble.vx;playerBubble.y+=playerBubble.vy;if(playerBubble.x-BUBBLE_RADIUS<0||playerBubble.x+BUBBLE_RADIUS>canvas.width)playerBubble.vx*=-1;if(playerBubble.y-BUBBLE_RADIUS<0){snapBubble(null);return}for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(grid[r][c]&&Math.hypot(playerBubble.x-grid[r][c].x,playerBubble.y-grid[r][c].y)<BUBBLE_RADIUS*2){snapBubble({r,c});return}}
-    rowDropTimer++; if(rowDropTimer >= TIME_UNTIL_ROW_DROP){ addNewRow(); }
+    rowDropTimer++; 
+    if(rowDropTimer >= LEVEL_ROW_DROP_SPEEDS[level]){ 
+        addNewRow(); 
+    }
     bombTimer++; if(bombTimer >= BOMB_INTERVAL) { spawnBombBubble(); }
 }
 
@@ -453,26 +489,26 @@ async function snapBubble(collidedCoords) {
     playerBubble.vx=0;playerBubble.vy=0;let s=null; 
     if(collidedCoords===null){let d=Infinity;for(let c=0;c<COLS;c++)if(!grid[0][c]){const D=Math.abs(playerBubble.x-(offsetX+c*HEX_WIDTH));if(D<d){d=D;s={r:0,c}}}} 
     else{const n=getNeighbors(collidedCoords.r,collidedCoords.c);let d=Infinity;for(const N of n)if(!grid[N.r][N.c]){const x=offsetX+N.c*HEX_WIDTH+(N.r%2)*BUBBLE_RADIUS,y=offsetY+N.r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s=N}}} 
-    if(s===null){let d=Infinity;for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(!grid[r][c]&&!(r%2===1&&c===COLS-1)){const x=offsetX+c*HEX_WIDTH+(r%2)*BUBBLE_RADIUS,y=offsetY+r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s={r,c}}}} 
-    if(s){grid[s.r][s.c]=createBubble(s.r,s.c,playerBubble.color,playerBubble.type);await handlePostSnap(s.r,s.c)}
+    if(s===null){let d=Infinity;for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(!grid[r][c]){const x=offsetX+c*HEX_WIDTH+(r%2)*BUBBLE_RADIUS,y=offsetY+r*HEX_HEIGHT,D=Math.hypot(playerBubble.x-x,playerBubble.y-y);if(D<d){d=D;s={r,c}}}} 
+    if(s){grid[s.r][s.c]=createBubble(s.r,s.c,playerBubble.color,playerBubble.type);
+    await handlePostSnap(s.r,s.c)}
     else{prepareNextShot()}
 }
 
 function createFloatingPoints(text, x, y) { floatingPoints.push({text,x,y,life:0,duration:FLOATING_POINTS_DURATION,vy:-0.7});}
 function createPopEffect(x, y, color) { for(let i=0;i<POP_PARTICLE_COUNT;i++){const angle=Math.random()*Math.PI*2;const speed=Math.random()*2+1;popAnimations.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:0,duration:POP_PARTICLE_DURATION,color:color||'#ccc',size:Math.random()*5+3});}}
-function popBubbles(bubblesToPop) { bubblesToPop.forEach(b=>{if(grid[b.r]?.[b.c]){const bubble=grid[b.r][b.c];createPopEffect(bubble.x,bubble.y,bubble.color);grid[b.r][b.c]=null}});}
-function dropBubbles(bubblesToDrop) { popBubbles(bubblesToDrop); }
 
-async function handlePostSnap(row, col) { 
-    let popsOccurred = false;
-    const landedBubble = grid[row][col]; 
+async function handlePostSnap(row, col) {
+    // NOTE: This function's logic is UNIVERSAL and applies to all levels.
+    // The `level` variable only affects colors and speed, not this core mechanic.
+    const landedBubble = grid[row][col];
+    if (!landedBubble) return;
 
-    if (landedBubble && landedBubble.type === SPECIALS.RAINBOW) {
+    // --- Step 1: Handle Rainbow Transformation (if applicable) ---
+    if (landedBubble.type === SPECIALS.RAINBOW) {
         const neighbors = getNeighbors(row, col).map(n => grid[n.r]?.[n.c]).filter(b => b && b.type === 'normal');
         const candidateColors = new Set(neighbors.map(n => n.color));
-        let bestColor = null;
-        let maxMatchSize = 0;
-
+        let bestColor = null, maxMatchSize = 0;
         for (const color of candidateColors) {
             landedBubble.color = color;
             const potentialMatches = findMatches(row, col);
@@ -481,165 +517,150 @@ async function handlePostSnap(row, col) {
                 bestColor = color;
             }
         }
-        
-        if (bestColor && maxMatchSize >= 3) {
-            landedBubble.color = bestColor;
-        } else {
-            landedBubble.color = currentColors[Math.floor(Math.random() * currentColors.length)];
-        }
+        landedBubble.color = (bestColor && maxMatchSize >= 3) ? bestColor : currentColors[Math.floor(Math.random() * currentColors.length)];
         landedBubble.type = 'normal';
     }
 
-    if (landedBubble && landedBubble.type === 'bomb') {
-        popsOccurred = handleBombExplosion(row, col);
+    // --- Step 2: Find all bubbles to pop, from matches and floaters ---
+    const coordsToPop = new Set();
+    const floatingBubbles = [];
+
+    // First, check for a bomb or a standard match from the landed bubble
+    if (landedBubble.type === 'bomb') {
+        playSound('bomb', { gain: 0.6 });
+        const bombCoords = getBombAffectedCoords(row, col);
+        bombCoords.forEach(coordStr => coordsToPop.add(coordStr));
+        const landedBubblePos = { x: offsetX + col * HEX_WIDTH + (row % 2) * BUBBLE_RADIUS, y: offsetY + row * HEX_HEIGHT };
+        createExplosionEffect(landedBubblePos.x, landedBubblePos.y);
+        shockwaves.push({ x: landedBubblePos.x, y: landedBubblePos.y, life: 0, duration: 35 });
     } else {
         const matches = findMatches(row, col);
         if (matches.length >= 3) {
-            popsOccurred = true;
-            const points = matches.length * 10;
-            score += points;
-            
-            let lifeBubblePopped = false;
-            matches.forEach(coord => {
-                const bubble = grid[coord.r]?.[coord.c];
-                if (bubble) {
-                    if (bubble.type === 'life') lifeBubblePopped = true;
-                    else playSound('pop', { gain: 0.6 }); // Increased gain for new pop
-                }
-            });
-
-            if (lifeBubblePopped) {
-                playSound('life', { gain: 0.6 });
-                shotsFired = Math.max(0, shotsFired - 1);
-                createFloatingPoints('-1 Miss!', canvas.width / 2, canvas.height / 2);
-            }
-            
-            if(grid[row]?.[col]) createFloatingPoints(`+${points}`, grid[row][col].x, grid[row][col].y);
-            popBubbles(matches);
+            matches.forEach(coord => coordsToPop.add(`${coord.r},${coord.c}`));
         }
     }
     
-    const floating = await findFloatingBubbles();
-    if (floating.length > 0) {
-        popsOccurred = true;
-        const points = floating.length * 20;
-        score += points;
-
-        let lifeBubbleDropped = false;
-        floating.forEach(coord => {
-            const bubble = grid[coord.r]?.[coord.c];
-            if (bubble) {
-                if (bubble.type === 'life') lifeBubbleDropped = true;
-                else playSound('pop', { gain: 0.5 }); // Lower gain for dropped bubbles
-            }
+    // CRUCIAL FIX: Always check for floating bubbles, regardless of whether a match was made.
+    const floaters = findFloatingBubbles(coordsToPop);
+    if (floaters.length > 0) {
+        floaters.forEach(coord => {
+            coordsToPop.add(`${coord.r},${coord.c}`);
+            floatingBubbles.push(coord); // Keep a separate list for drop points
         });
-        if (lifeBubbleDropped) {
-             playSound('life', { gain: 0.6 });
-             shotsFired = Math.max(0, shotsFired - 1);
-             createFloatingPoints('-1 Miss!', canvas.width / 2, canvas.height / 2);
+    }
+
+    // --- Step 3: Process the results ---
+    if (coordsToPop.size > 0) {
+        let totalPoints = 0, lifeBubblesPopped = 0, dropPoints = 0;
+
+        for (const coordStr of coordsToPop) {
+            const [r, c] = coordStr.split(',').map(Number);
+            const bubble = grid[r]?.[c];
+            if (bubble) {
+                if (floatingBubbles.some(fb => fb.r === r && fb.c === c)) {
+                    dropPoints += 100;
+                } else {
+                    totalPoints += 50;
+                }
+                if (bubble.type === 'life') lifeBubblesPopped++;
+                else if (bubble.type !== 'bomb') playSound('pop', { gain: 0.4 });
+                createPopEffect(bubble.x, bubble.y, bubble.color);
+            }
         }
         
-        let centerX=0,centerY=0,bubbleCount=0;
-        floating.forEach(coord => {const bubbleData=grid[coord.r]?.[coord.c];if(bubbleData){centerX+=bubbleData.x;centerY+=bubbleData.y;bubbleCount++;}});
-        if(bubbleCount>0) createFloatingPoints(`+${points}`, centerX/bubbleCount, centerY/bubbleCount);
-        dropBubbles(floating);
-    } 
-    
-    if(!popsOccurred) { shotsFired++;} 
-    updateUI(); 
-
-    if(isGridEmpty()){
-        if (level < MAX_LEVEL) {
-            level++;
-            gameState = 'levelup';
-            playSound('levelUp', { gain: 0.6 });
-            currentColors = ALL_COLORS[level];
-            levelUpMessageEl.innerText = `Board Cleared! Moving to Level ${level}!`;
-            levelUpOverlay.style.display = 'flex';
-        } else {
-            endGame(true);
+        if (lifeBubblesPopped > 0) {
+            playSound('life', { gain: 0.6 });
+            shotsFired = Math.max(0, shotsFired - lifeBubblesPopped);
+            createFloatingPoints(`-${lifeBubblesPopped} Miss!`, canvas.width / 2, canvas.height / 2);
         }
-        return;
+
+        score += totalPoints + dropPoints;
+        if(totalPoints > 0) createFloatingPoints(`+${totalPoints}`, landedBubble.x, landedBubble.y);
+        if(dropPoints > 0) createFloatingPoints(`+${dropPoints} Drop!`, canvas.width / 2, canvas.height * 0.6);
+        
+        for (const coordStr of coordsToPop) {
+            const [r, c] = coordStr.split(',').map(Number);
+            if (grid[r]) grid[r][c] = null;
+        }
+    } else {
+        shotsFired++; // Only a miss if NO bubbles were popped.
     }
 
+    // --- Step 4: Post-Turn & Level-Up Checks ---
+    updateUI();
+    if (isGridEmpty()) {
+        if (level < MAX_LEVEL) {
+            level++;
+            updateLevelStyles(level);
+            currentColors = ALL_COLORS[level];
+            gameState = 'levelup';
+            playSound('levelUp', { gain: 0.6 });
+            levelUpMessageEl.innerText = `Board Cleared! Moving to Level ${level}!`;
+            levelUpOverlay.style.display = 'flex';
+        } else { endGame(true); }
+        return;
+    }
     if (level < MAX_LEVEL && score >= LEVEL_UP_SCORES[level]) {
         level++;
+        updateLevelStyles(level);
+        currentColors = ALL_COLORS[level];
         gameState = 'levelup';
         playSound('levelUp', { gain: 0.5 });
-        currentColors = ALL_COLORS[level];
         levelUpMessageEl.innerText = `You've reached Level ${level}! Get ready for a new board with new colors!`;
         levelUpOverlay.style.display = 'flex';
         return;
     }
+    for (let c = 0; c < COLS; c++) if (grid[ROWS - 1][c]) { endGame(false); return; }
+    if (shotsFired >= SHOTS_UNTIL_LOSS) { endGame(false); return; }
     
-    for (let c=0; c<COLS; c++) if (grid[ROWS-1][c]){ endGame(false); return; }
-    if (shotsFired >= SHOTS_UNTIL_LOSS) { endGame(false); return;} 
     prepareNextShot();
 }
 
-function handleBombExplosion(row, col) {
-    playSound('bomb', { gain: 0.6 });
-    let affectedCoords = [{r: row, c: col}, ...getNeighbors(row, col)];
-    let points = 0;
-    let bubblesPopped = 0;
-    let lifeBubbleInBlast = false;
-
-    affectedCoords.forEach(coord => { if(grid[coord.r]?.[coord.c]?.type === 'life') lifeBubbleInBlast = true; });
-    if(lifeBubbleInBlast) {
-        playSound('life', { gain: 0.6 });
-        shotsFired = Math.max(0, shotsFired - 1);
-        createFloatingPoints('-1 Miss!', canvas.width / 2, canvas.height / 2);
-    }
-
-    affectedCoords.forEach(coord => {
-        if(grid[coord.r]?.[coord.c]) {
-            points += 10;
-            bubblesPopped++;
-            const bubble = grid[coord.r][coord.c];
-            createPopEffect(bubble.x, bubble.y, bubble.color);
-            grid[coord.r][coord.c] = null;
-        }
+function getBombAffectedCoords(row, col) {
+    const affectedCoordsSet = new Set();
+    affectedCoordsSet.add(`${row},${col}`);
+    const firstRing = getNeighbors(row, col);
+    firstRing.forEach(coord => affectedCoordsSet.add(`${coord.r},${coord.c}`));
+    firstRing.forEach(neighbor => {
+        getNeighbors(neighbor.r, neighbor.c).forEach(secondNeighbor => {
+            affectedCoordsSet.add(`${secondNeighbor.r},${secondNeighbor.c}`);
+        });
     });
-
-    score += points;
-    const landedBubblePos = { x: offsetX + col * HEX_WIDTH + (row % 2) * BUBBLE_RADIUS, y: offsetY + row * HEX_HEIGHT };
-    if(bubblesPopped > 0) createFloatingPoints(`+${points}`, landedBubblePos.x, landedBubblePos.y);
-    createExplosionEffect(landedBubblePos.x, landedBubblePos.y);
-    shockwaves.push({ x: landedBubblePos.x, y: landedBubblePos.y, life: 0, duration: 25 });
-    return bubblesPopped > 0;
+    return affectedCoordsSet;
 }
 
 function createExplosionEffect(x, y) { for (let i = 0; i < 60; i++) { const angle = Math.random() * Math.PI * 2; const speed = Math.random() * 6 + 2; popAnimations.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 0, duration: POP_PARTICLE_DURATION + 30, color: Math.random() < 0.7 ? 'orange' : '#FFDD00', size: Math.random() * 8 + 5 });}}
 
 function addNewRow() {
-    for (let r = ROWS - 2; r >= 0; r--) {
-        for (let c = 0; c < COLS; c++) {
-            if (grid[r][c]) {
-                grid[r + 1][c] = grid[r][c];
-                grid[r + 1][c].row = r + 1;
-                grid[r + 1][c].x = offsetX + c * HEX_WIDTH + ((r + 1) % 2) * BUBBLE_RADIUS;
-                grid[r + 1][c].y = offsetY + (r + 1) * HEX_HEIGHT;
-            } else {
-                grid[r + 1][c] = null;
-            }
-        }
-    }
-    
-    newRowsAdded++;
-    const placeLifeBubbles = (newRowsAdded % 2 !== 0); 
-
-    for (let c = 0; c < COLS; c++) {
-        if (placeLifeBubbles && (c === 0 || c === COLS - 1)) {
-            grid[0][c] = createBubble(0, c, '#ffffff', 'life');
-        } else {
-            grid[0][c] = createBubble(0, c);
-        }
-    }
-
     for (let c = 0; c < COLS; c++) {
         if (grid[ROWS - 1][c]) {
             endGame(false);
             return;
+        }
+    }
+    newRowsDropped++;
+    for (let r = ROWS - 2; r >= 0; r--) {
+        for (let c = 0; c < COLS; c++) {
+            grid[r + 1][c] = grid[r][c];
+        }
+    }
+    for (let r = 1; r < ROWS; r++) { 
+        for (let c = 0; c < COLS; c++) {
+            const bubble = grid[r][c];
+            if (bubble) {
+                bubble.row = r;
+                bubble.x = offsetX + c * HEX_WIDTH + (r % 2) * BUBBLE_RADIUS;
+                bubble.y = offsetY + r * HEX_HEIGHT;
+            }
+        }
+    }
+    const addLifeBubble = (newRowsDropped > 0 && newRowsDropped % 2 === 0);
+    let lifeCol = addLifeBubble ? Math.floor(Math.random() * COLS) : -1;
+    for (let c = 0; c < COLS; c++) {
+        if (c === lifeCol) {
+            grid[0][c] = createBubble(0, c, '#ffffff', 'life');
+        } else {
+            grid[0][c] = createBubble(0, c, null, 'normal');
         }
     }
     rowDropTimer = 0;
@@ -652,65 +673,122 @@ function prepareNextShot() {
     rainbowSoundSource = stopLoopingSound(rainbowSoundSource);
 
     playerBubble={...nextBubble,x:canvas.width/2,y:canvas.height-BUBBLE_RADIUS};
-    if(playerBubble.type === 'bomb') { sizzleSoundSource = playLoopingSound('sizzle', { gain: 0.3 }); }
-    if(playerBubble.type === 'rainbow') { rainbowSoundSource = playLoopingSound('rainbow', { gain: 0.5 }); }
+    if(playerBubble.type === 'bomb') { sizzleSoundSource = playLoopingSound('sizzle', { gain: 0.15 }); }
+    if(playerBubble.type === 'rainbow') { rainbowSoundSource = playLoopingSound('rainbow', { gain: 0.2 }); }
 
     nextBubble=generateNextBubble();
     updateUI();
 }
-function getNeighbors(r,c) { const p=r%2,d=[{dr:0,dc:1},{dr:0,dc:-1},{dr:-1,dc:p-1},{dr:-1,dc:p},{dr:1,dc:p-1},{dr:1,dc:p}],n=[];for(const i of d){const nr=r+i.dr,nc=c+i.dc;if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&!(nr%2===1&&nc===COLS-1))n.push({r:nr,c:nc})}return n}
+function getNeighbors(r,c) { const p=r%2,d=[{dr:0,dc:1},{dr:0,dc:-1},{dr:-1,dc:p-1},{dr:-1,dc:p},{dr:1,dc:p-1},{dr:1,dc:p}],n=[];for(const i of d){const nr=r+i.dr,nc=c+i.dc;if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS)n.push({r:nr,c:nc})}return n}
 
 function findMatches(startR, startC) {
-    const startBubble = grid[startR][startC];
-    if (!startBubble) return [];
-
-    const matchColor = startBubble.color;
-    const toVisit = [{ r: startR, c: startC }];
-    const visited = new Set([`${startR},${startC}`]);
-    const matches = [];
-
-    while (toVisit.length > 0) {
-        const current = toVisit.shift();
-        matches.push(current);
-
-        getNeighbors(current.r, current.c).forEach(nCoord => {
-            const coordStr = `${nCoord.r},${nCoord.c}`;
-            if (!visited.has(coordStr)) {
-                const neighbor = grid[nCoord.r]?.[nCoord.c];
-                if (neighbor && (neighbor.color === matchColor || neighbor.type === 'life')) {
-                    visited.add(coordStr);
-                    toVisit.push(nCoord);
-                }
-            }
-        });
+    const startBubble = grid[startR]?.[startC];
+    if (!startBubble || startBubble.type === 'life' || startBubble.type === 'bomb') {
+        return [];
     }
 
-    const hasColorBubble = matches.some(coord => grid[coord.r][coord.c]?.type !== 'life');
-    if (matches.length >= 3 && hasColorBubble) {
-        return matches;
+    const matchColor = startBubble.color;
+    const cluster = [];
+    const toVisit = [{ r: startR, c: startC }];
+    const visited = new Set([`${startR},${startC}`]);
+
+    while (toVisit.length > 0) {
+        const currentCoord = toVisit.shift();
+        cluster.push(currentCoord);
+
+        for (const neighborCoord of getNeighbors(currentCoord.r, currentCoord.c)) {
+            const coordStr = `${neighborCoord.r},${neighborCoord.c}`;
+            if (!visited.has(coordStr)) {
+                const neighborBubble = grid[neighborCoord.r]?.[neighborCoord.c];
+                if (neighborBubble) {
+                    if (neighborBubble.color === matchColor || neighborBubble.type === 'life') {
+                        visited.add(coordStr);
+                        toVisit.push(neighborCoord);
+                    }
+                }
+            }
+        }
+    }
+
+    const colorBubbleCount = cluster.reduce((count, coord) => {
+        return grid[coord.r][coord.c]?.type === 'normal' ? count + 1 : count;
+    }, 0);
+    
+    if (cluster.length >= 3 && colorBubbleCount > 0) {
+        return cluster;
     }
 
     return [];
 }
-async function findFloatingBubbles() { await new Promise(r => setTimeout(r, 50)); const o=new Set(),q=[];for(let c=0;c<COLS;c++)if(grid[0][c]){q.push({r:0,c:c});o.add(`0,${c}`)}let h=0;while(h<q.length){const u=q[h++];for(const n of getNeighbors(u.r,u.c))if(grid[n.r][n.c]&&!o.has(`${n.r},${n.c}`)){o.add(`${n.r},${n.c}`);q.push(n)}}const f=[];for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(grid[r][c]&&!o.has(`${r},${c}`))f.push({r,c});return f}
+
+function findFloatingBubbles(coordsToIgnore = new Set()) {
+    const anchored = new Set();
+    const queue = [];
+
+    // Start traversal from top-row bubbles that are not being popped
+    for (let c = 0; c < COLS; c++) {
+        const coordStr = `0,${c}`;
+        if (grid[0][c] && !coordsToIgnore.has(coordStr)) {
+            queue.push({ r: 0, c: c });
+            anchored.add(coordStr);
+        }
+    }
+
+    // BFS to find all anchored bubbles
+    let head = 0;
+    while (head < queue.length) {
+        const current = queue[head++];
+        for (const neighbor of getNeighbors(current.r, current.c)) {
+            const neighborStr = `${neighbor.r},${neighbor.c}`;
+            if (grid[neighbor.r][neighbor.c] && !anchored.has(neighborStr) && !coordsToIgnore.has(neighborStr)) {
+                anchored.add(neighborStr);
+                queue.push(neighbor);
+            }
+        }
+    }
+
+    // Any bubble not in the anchored set (and not being popped) is floating
+    const floating = [];
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            const coordStr = `${r},${c}`;
+            if (grid[r][c] && !anchored.has(coordStr) && !coordsToIgnore.has(coordStr)) {
+                floating.push({ r, c });
+            }
+        }
+    }
+    return floating;
+}
+
 function isGridEmpty() { for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(grid[r][c])return false; return true;}
+
 function endGame(isWinner) {
     gameState='gameover';
     isFiring=false;
     sizzleSoundSource = stopLoopingSound(sizzleSoundSource);
     rainbowSoundSource = stopLoopingSound(rainbowSoundSource);
+    
+    let message = '';
+    if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('bubblePopHighScore', highScore);
+        message = isWinner ? 'You Win! New High Score!' : 'New High Score!';
+    } else {
+        message = isWinner ? 'You Win!' : 'Sorry, you lost!';
+    }
+    endMessageEl.innerText = message;
+
     if(isWinner){
-        endMessageEl.innerText = 'You Win!';
         playSound('win', { gain: 0.5 });
         createFirework();
     } else {
-        endMessageEl.innerText = 'Sorry, you lost!';
         playSound('lose', { gain: 0.5 });
         createRain();
     }
     finalScoreEl.innerText = score;
     gameOverEl.style.display='flex';
 }
+
 function createFirework() { const x=Math.random()*canvas.width*0.8+canvas.width*0.1; const y=Math.random()*canvas.height*0.5+canvas.height*0.1; const color=`hsl(${Math.random()*360},100%,50%)`; for(let i=0;i<50;i++){const angle=Math.random()*Math.PI*2;const speed=Math.random()*3+1;fireworks.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,color,size:Math.random()*2+1})}}
 function createRain() { for(let i=0;i<100;i++){rain.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,len:Math.random()*20+10,speed:Math.random()*5+2})}}
 
@@ -731,7 +809,7 @@ function handleAimUpdate(clientX,clientY) {
 
 function handleFire() {
     if(gameState!=='playing'||isFiring||aim.y>playerBubble.y-20)return;
-    playSound('shoot', { gain: 0.4 });
+    playSound('shoot', { gain: 0.25 });
 
     const angle=Math.atan2(aim.y-playerBubble.y,aim.x-playerBubble.x),speed=15;
     playerBubble.vx=Math.cos(angle)*speed;
@@ -759,8 +837,8 @@ audioToggleButton.addEventListener('click', () => {
     } else {
         initAudio();
         playSound('click', {gain: 0.4});
-        if (playerBubble && playerBubble.type === 'bomb') sizzleSoundSource = playLoopingSound('sizzle', { gain: 0.3 });
-        if (playerBubble && playerBubble.type === 'rainbow') { rainbowSoundSource = playLoopingSound('rainbow', { gain: 0.5 }); }
+        if (playerBubble && playerBubble.type === 'bomb') sizzleSoundSource = playLoopingSound('sizzle', { gain: 0.15 });
+        if (playerBubble && playerBubble.type === 'rainbow') { rainbowSoundSource = playLoopingSound('rainbow', { gain: 0.2 }); }
     }
 });
 
